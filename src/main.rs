@@ -19,6 +19,7 @@ fn main() {
     let mut user_input: String = read!("{}\n");
     user_input.retain(|c| !c.is_whitespace());
     let mut input = user_input.as_str();
+    let mut unique_variable_count:usize = 0;
     if !validate_expression(&input){
         println!("Invalid expression!");
         return;
@@ -26,13 +27,21 @@ fn main() {
 
     {
         let mut current_token: Token;
+        let mut variables_detected:Vec<String> = Vec::new();
         while let Some(category) = get_token_category(input) {
             println!("Remaining untokenized data: {input}");
-            (current_token, input) = build_token_of_type(category, &input);
+            (current_token, input) = build_token_of_type(category.clone(), &input);
 
+            if category == Variable && !variables_detected.contains(&current_token.token) {
+                unique_variable_count += 1;
+                variables_detected.push(current_token.token.clone());
+            }
             tokens.push(current_token);
+
         }
     }
+    let unique_variable_count = unique_variable_count;
+    println!("Unique variable count is {}", unique_variable_count);
 
     //Handle implicit operations
     {
@@ -123,19 +132,22 @@ fn main() {
     //Tree successfully constructed
     print_tree(&root_node, &mut String::from(""), true);
 
-    let simplifiable_nodes = Rc::new(RefCell::new(Vec::<usize>::new()));
-    if get_simplifiable_nodes(&root_node, Rc::clone(&simplifiable_nodes)) {
+    if unique_variable_count == 0{
         //No variables, evaluate as normal.
         println!("{}", evaluate_tree(&root_node));
         return;
     }
 
+    let simplifiable_nodes = Rc::new(RefCell::new(Vec::<usize>::new()));
+    get_simplifiable_nodes(&root_node, Rc::clone(&simplifiable_nodes));
+
     for index in simplifiable_nodes.borrow().iter(){
         let index = *index;
         let node_value = evaluate_tree(get_node_by_index(&root_node, index));
-        root_node = replace_node_at_index(root_node, Terminal(Token { token_type: Constant, token: node_value.to_string() }, index), index, get_position_of_first_one(index) + 1);
+        root_node = replace_node_at_index(root_node, Terminal(Token { token_type: Constant, token: node_value.to_string() }, index), index, get_position_of_first_one(index));
         print_tree(&root_node, &mut String::from(""), true);
     }
+
     //STEPS TO SOLVE FOR VARIABLES
     //1: Simplify any constants and combine variables
     //1a If a branching node has one constant child and one branching child which contains the same operator as itself, and that branching child has one constant and one variable as operands, the first branching node can be replaced
@@ -145,22 +157,15 @@ fn main() {
     //2: Apply the distributive property
     //3: Isolate (somehow)
 
-
     //To implement the commutative property, use the same pass when identifying simplifiable nodes to flag all un-simplifiable nodes. All un-simplifiable nodes can either be simplified to coefficient-variable(C-V) form, or will require the commutative property.
-    //NOTE: Multiplication doesn't disqualify a branch for this, so long as at least one of the operands is a variable.
-
-    //TODO:Split the tree by the relational operator (what if there are variables, but no relational operator?)
-    //TODO:Determine if the branches are group A(simplifiable to a constant or coefficient-variable(C-V) node) or B(not that). MOSTLY DONE, via get_simplifiable_nodes.
-    //TODO:Further split group B into BA(valid for commutation) and BB(invalid)
-    //TODO:Swap around children in group BA such that the group consists of nodes with one expanded C-V node child and one simplifiable node child (this doesn't take multiple variables into account)
-    //TODO:Compress and simplify those nodes respectively.
-    //TODO:Compress everything in A
-    //TODO:Figure out what the heck to do with group BB, which probably consists of things that look like 2^x
+    //NOTE: Multiplication doesn't disqualify a branch for this, so long as exactly one of the operands is a variable.
 }
 
 fn get_position_of_first_one(number:usize) -> usize{
-    for i in 0..usize::BITS{
-        if number & (1 << i) > 0 {return usize::try_from(i).unwrap()}
+    for i in (0..usize::BITS).rev(){
+        if number & (1 << i) > 0 {
+            return usize::try_from(i).unwrap()
+        }
     }
     panic!("Function should not be called on the number zero")
 }
@@ -236,6 +241,33 @@ fn combine_nodes(mut root_node: Node, index1:usize, index2: usize) -> Node
     let new_node = get_identity_node(get_parent_of_node(&root_node, index2), index2);
 
     return replace_node_at_index(root_node, new_node, index2, get_position_of_first_one(index2) + 1)
+}
+
+fn combine_all_nodes_of_type(mut root_node:Node) -> Node{
+    let tree_iterator = TreeIterator{root:&root_node, current:Some(&root_node), unexplored:VecDeque::new()};
+    let mut node_type: Option<&String> = None;
+    let mut result: VecDeque<usize> = VecDeque::with_capacity(2);
+    for node in tree_iterator{
+        match node_type{
+            Some(variable) =>{
+                if *variable != node.get_token().token {continue}
+                result.push_back(node.get_index());
+            }
+            None => {
+                let token = node.get_token();
+                if token.token_type != Variable { continue }
+
+                node_type = Some(&token.token);
+                result.push_back(node.get_index());
+            }
+        }
+    };
+
+    while result.len() > 1 {
+        root_node = combine_nodes(root_node, result[0], result[1])
+    }
+
+    root_node
 }
 
 fn construct_variable_coefficient_node(variable:Token, coefficient:f32, index:usize) -> Node{
@@ -594,19 +626,20 @@ fn build_token_of_type(category: TokenCategory, data: &str) -> (Token, &str){
 }
 
 fn replace_node_at_index<'a>(root_node:Node, new_node:Node, index:usize, path_position:usize) -> Node {
-    if path_position == usize::try_from(usize::BITS).unwrap(){
+    if path_position == 0{
         return new_node
     }
+    let path_position = path_position - 1;
     if let Branching(token, children, current_index) = root_node {
         let bit =index & (1 << path_position) > 0;
         let (mut keep_child, mut change_child) = children.children;
 
         let new_children = if bit == false{
             (keep_child, change_child) = (change_child, keep_child);
-            Box::from(BranchingNode { children: (replace_node_at_index(change_child, new_node, index, path_position + 1), keep_child) })
+            Box::from(BranchingNode { children: (replace_node_at_index(change_child, new_node, index, path_position), keep_child) })
         }
         else{
-            Box::from(BranchingNode { children: (keep_child, replace_node_at_index(change_child, new_node, index, path_position + 1)) })
+            Box::from(BranchingNode { children: (keep_child, replace_node_at_index(change_child, new_node, index, path_position)) })
         };
 
         Branching(token,
@@ -685,6 +718,33 @@ impl Node{
                 if token.token != "*" {None} else{ Some(self.get_child_of_type(Constant).unwrap().get_token().token.parse().unwrap())}
             }
         }
+    }
+}
+
+struct TreeIterator<'a>{
+    root: &'a Node,
+    current: Option<&'a Node>,
+    unexplored: VecDeque<&'a Node>
+}
+
+impl<'a> Iterator for TreeIterator<'a>{
+    type Item = &'a Node;
+
+    fn next(&mut self) -> Option<Self::Item>{
+        let current = self.current;
+        if let Some(current_node) = current {
+            match current_node {
+                Branching(_, children, _) => {
+                    self.current = Some(&children.children.0);
+                    self.unexplored.push_back(&children.children.1);
+                }
+                Terminal(..) => {
+                    self.current = self.unexplored.pop_back();
+                }
+            }
+        }
+
+        current
     }
 }
 
