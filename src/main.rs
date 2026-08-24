@@ -14,41 +14,36 @@ const OPERATOR_PRECEDENCE_VALUES: [i32; 6] = [2,1,1,0,0,-1];
 fn main() {
     let mut tokens: Vec<Token> = Vec::with_capacity(10);
 
-    //TODO: Current test case: x*4 + 5*6
     test_validation();
     let mut user_input: String = read!("{}\n");
     user_input.retain(|c| !c.is_whitespace());
     let mut input = user_input.as_str();
-    let mut unique_variable_count:usize = 0;
+    let mut unique_variables: Vec<String> = Vec::new();
     if !validate_expression(&input){
-        println!("Invalid expression!");
-        return;
+        panic!("Invalid expression");
     }
 
     {
         let mut current_token: Token;
-        let mut variables_detected:Vec<String> = Vec::new();
         while let Some(category) = get_token_category(input) {
             println!("Remaining untokenized data: {input}");
             (current_token, input) = build_token_of_type(category.clone(), &input);
 
-            if category == Variable && !variables_detected.contains(&current_token.token) {
-                unique_variable_count += 1;
-                variables_detected.push(current_token.token.clone());
+            if category == Variable && !unique_variables.contains(&current_token.token) {
+                unique_variables.push(current_token.token.clone());
             }
             tokens.push(current_token);
 
         }
     }
-    let unique_variable_count = unique_variable_count;
-    println!("Unique variable count is {}", unique_variable_count);
+    let unique_variables = unique_variables;
 
     //Handle implicit operations
     {
         let mut i = 0;
         while i <tokens.len()
         {
-            if i > 0 && tokens[i].token_type == Variable && tokens[i - 1].token_type == Variable {
+            if i > 0 && tokens[i].token_type == Variable && (tokens[i - 1].token_type == Variable || tokens[i-1].token_type == Constant) {
                 tokens.insert(i, Token{token_type: Operator, token:'*'.to_string()});
                 //Skip forward a token, as the next token in the list is now the one that we just checked.
                 i += 1;
@@ -72,15 +67,9 @@ fn main() {
     println!("Tokens:");
     for token in &tokens{
         let temp = &token.token;
-        println!("{}", *temp);
+        print!("{},", *temp);
     }
-
-    // let mut experiment = VecDeque::from(['a']);
-    // experiment.push_back('b');
-    // experiment.push_front('a');
-    // for x in 0..experiment.len(){
-    //     print!("{}", experiment[x])
-    // }
+    println!();
 
     let mut operand_stack: VecDeque<Node> = VecDeque::with_capacity(tokens.len());
     let mut operator_stack: VecDeque<Token> = VecDeque::with_capacity(5);
@@ -132,12 +121,15 @@ fn main() {
     //Tree successfully constructed
     print_tree(&root_node, &mut String::from(""), true);
 
-    if unique_variable_count == 0{
+    if unique_variables.len() == 0{
         //No variables, evaluate as normal.
         println!("{}", evaluate_tree(&root_node));
         return;
     }
 
+    root_node = combine_all_variables(root_node, &unique_variables);
+    print_tree(&root_node, &mut String::from(""), true);
+    todo!("This code currently assumes ALL operators are commutative.");
     let simplifiable_nodes = Rc::new(RefCell::new(Vec::<usize>::new()));
     get_simplifiable_nodes(&root_node, Rc::clone(&simplifiable_nodes));
 
@@ -197,8 +189,20 @@ fn is_node_variable_coefficient(node:&Node) -> bool{
         if check_this_and_that(|node| -> bool {node.get_token().token_type == Constant},|node| -> bool {node.get_token().token_type == Variable}, children){
             return true;
         }
+
+        if check_this_and_that(|node| -> bool {node.get_token().token_type == Constant},|node| -> bool {is_node_variable_exponent(&node)}, children){
+            return true;
+        }
     };
         false
+}
+
+fn is_node_variable_exponent(node:&Node) -> bool{
+    if let Branching(token, children, _) = node{
+        if token.token != "^" {return false;}
+        return children.children.0.get_token().token_type == Variable;
+    }
+    return false;
 }
 
 ///is the node equivalent to 2 * variable
@@ -232,7 +236,7 @@ fn combine_nodes(mut root_node: Node, index1:usize, index2: usize) -> Node
 
     if token1.token_type == Constant && token2.token_type == Constant{
         let number= token1.token.parse::<f32>().unwrap() + token2.token.parse::<f32>().unwrap();
-        root_node = replace_node_at_index(root_node, construct_constant(number, index1), index1, get_position_of_first_one(index1) + 1);
+        root_node = replace_node_at_index(root_node, construct_constant(number, index1), index1, get_position_of_first_one(index1));
     }
 
     let variable = if token1.token_type == Variable {token1} else {token2};
@@ -240,33 +244,32 @@ fn combine_nodes(mut root_node: Node, index1:usize, index2: usize) -> Node
     root_node = replace_node_at_index(root_node, construct_variable_coefficient_node(variable, variable_number_1.unwrap() + variable_number_2.unwrap(), index1), index1, get_position_of_first_one(index1));
     let new_node = get_identity_node(get_parent_of_node(&root_node, index2), index2);
 
-    return replace_node_at_index(root_node, new_node, index2, get_position_of_first_one(index2) + 1)
+    return replace_node_at_index(root_node, new_node, index2, get_position_of_first_one(index2))
 }
 
-fn combine_all_nodes_of_type(mut root_node:Node) -> Node{
+fn combine_all_variables(mut root_node:Node, variables:&Vec<String>) -> Node{
     let tree_iterator = TreeIterator{root:&root_node, current:Some(&root_node), unexplored:VecDeque::new()};
-    let mut node_type: Option<&String> = None;
-    let mut result: VecDeque<usize> = VecDeque::with_capacity(2);
-    for node in tree_iterator{
-        match node_type{
-            Some(variable) =>{
-                if *variable != node.get_token().token {continue}
-                result.push_back(node.get_index());
-            }
-            None => {
-                let token = node.get_token();
-                if token.token_type != Variable { continue }
+    let mut result: Vec<Vec<usize>> = Vec::with_capacity(variables.len());
+    for _ in 0..variables.len(){
+        result.push(Vec::new());
+    }
 
-                node_type = Some(&token.token);
-                result.push_back(node.get_index());
-            }
+    for node in tree_iterator{
+        let variable_index = variables.iter().position(|thing| *thing == node.get_token().token);
+        if let Some(index) = variable_index {
+            let node_index = node.get_index();
+            result[index].push(
+                if is_node_variable_coefficient(get_parent_of_node(&root_node, node_index)) {
+                    node_index / 2} else {node_index }
+            );
         }
     };
 
-    while result.len() > 1 {
-        root_node = combine_nodes(root_node, result[0], result[1])
+    for mut result_set in result{
+        while result_set.len() > 1{
+            root_node = combine_nodes(root_node, result_set.swap_remove(0), result_set.swap_remove(0))
+        }
     }
-
     root_node
 }
 
@@ -290,7 +293,7 @@ fn get_identity_node(parent_node: &Node, index:usize) -> Node{
             "*" | "/" | "^" => 1f32,
             &_ => unreachable!("Function called on non-operator node"),
         };
-        construct_constant(required_number, index);
+        return construct_constant(required_number, index)
     }
     unreachable!("Never call this function on a terminal node")
 }
