@@ -3,7 +3,6 @@ use text_io::read;
 use std::mem;
 use std::cmp;
 use std::collections::VecDeque;
-use std::fmt::format;
 use std::rc::Rc;
 use regex::Regex;
 use crate::Node::{Branching, Terminal};
@@ -76,9 +75,13 @@ fn main() {
 
     {
         let mut loop_index: usize = 0;
+        let mut debug_index:usize = 0;
         let mut vec_shifted: bool = false;
 
         while loop_index < tokens.len() {
+            println!();
+            println!("{}", debug_index);
+            debug_index += 1;
             match tokens[loop_index].token_type {
                 Constant | Variable => {
                     operand_stack.push_back(Terminal(tokens.remove(loop_index), 0));
@@ -100,12 +103,15 @@ fn main() {
                         }
                         let child1: Node = operand_stack.pop_back().unwrap();
                         let child2: Node = operand_stack.pop_back().unwrap();
-                        push_new_node_to_stack(&mut operand_stack, operator_stack.pop_back().unwrap(), child1, child2,0)
+                        push_new_node_to_stack(&mut operand_stack, top_token, child1, child2,0)
                     }
                 }
             }
             loop_index +=  if vec_shifted {0} else {1};
             vec_shifted = false;
+            for i in &operand_stack {
+                print_tree(i, &mut String::from(""), true);
+            }
         }
     }
 
@@ -183,14 +189,14 @@ fn validate_expression(input: &str) -> bool{
 
 ///is the node in the form n * variable
 fn is_node_variable_coefficient(node:&Node) -> bool{
-    if let Branching(token, children, ..) = node{
+    if let Branching(token, child_1, child_2, ..) = node{
         if token.token != "*" {return false}
 
-        if check_this_and_that(|node| -> bool {node.get_token().token_type == Constant},|node| -> bool {node.get_token().token_type == Variable}, children){
+        if check_this_and_that(|node| -> bool {node.get_token().token_type == Constant},|node| -> bool {node.get_token().token_type == Variable}, child_1, child_2){
             return true;
         }
 
-        if check_this_and_that(|node| -> bool {node.get_token().token_type == Constant},|node| -> bool {is_node_variable_exponent(&node)}, children){
+        if check_this_and_that(|node| -> bool {node.get_token().token_type == Constant},|node| -> bool {is_node_variable_exponent(&node)}, child_1, child_2){
             return true;
         }
     };
@@ -198,21 +204,21 @@ fn is_node_variable_coefficient(node:&Node) -> bool{
 }
 
 fn is_node_variable_exponent(node:&Node) -> bool{
-    if let Branching(token, children, _) = node{
+    if let Branching(token, child_1, child_2, _) = node{
         if token.token != "^" {return false;}
-        return children.children.0.get_token().token_type == Variable;
+        return child_1.get_token().token_type == Variable;
     }
     return false;
 }
 
 ///is the node equivalent to 2 * variable
 fn is_node_variable_sum(node:&Node) -> bool{
-    if let Branching(token, children, ..) = node{
+    if let Branching(token, child_1, child_2, ..) = node{
         if token.token != "+" && token.token != "-" {return false};
 
-        if children.children.0.get_token().token_type != Variable || children.children.1.get_token().token_type != Variable {return false};
+        if child_1.get_token().token_type != Variable || child_2.get_token().token_type != Variable {return false};
 
-        return children.children.0.get_token().token == children.children.1.get_token().token
+        return child_1.get_token().token == child_2.get_token().token
     }
 
     false
@@ -274,11 +280,10 @@ fn combine_all_variables(mut root_node:Node, variables:&Vec<String>) -> Node{
 }
 
 fn construct_variable_coefficient_node(variable:Token, coefficient:f32, index:usize) -> Node{
-    let new_children = Box::from(BranchingNode{children:
-    (construct_constant(coefficient, index * 2),
-     Terminal(variable, index * 2 + 1))});
+    let constant_child = Box::from(construct_constant(coefficient, index * 2));
+    let variable_child = Box::from(Terminal(variable, index * 2 + 1));
     let new_token = Token{token_type:Operator, token: String::from("*")};
-    Branching(new_token, new_children, index)
+    Branching(new_token, constant_child,variable_child, index)
 }
 
 fn get_parent_of_node(root_node: &Node, index:usize) -> &Node {
@@ -325,43 +330,17 @@ fn get_variable_combination_result(first_node:&Node, second_node:&Node) -> Node 
     let constant_child = Terminal(Token{token_type:Constant, token:final_coefficient.to_string()}, first_node.get_index() * 2);
     let variable_child = Terminal(first_node.get_token().clone(), first_node.get_index() * 2 + 1);
     let new_token = Token{token_type:Operator, token: String::from("*")};
-    Branching(new_token, Box::from(BranchingNode{children:(constant_child,variable_child)}), first_node.get_index())
+    Branching(new_token, Box::from(constant_child),Box::from(variable_child), first_node.get_index())
 }
-// fn is_node_expanded_coefficient_variable(node:&Node) -> bool{
-    //     if let Branching(token, children, _) = node{
-    //         //TODO: Division technically has some behavior here
-    //         if token.token != "+" && token.token != "-" && token.token != "*" { return false}
-    //
-    //         let child_1_token = children.children.0.get_token();
-    //         let child_2_token = children.children.1.get_token();
-    //
-    //         if let (Terminal(..), Terminal(..)) = children.children {
-    //             //TODO: Handle the 0 - number that is used to represent negative numbers
-    //             return is_node_variable_sum(node) || is_node_variable_coefficient(node);
-    //         }
-    //
-    //         if check_this_and_that(|node| -> bool {node.is_terminal()}, |node| -> bool {!node.is_terminal()}, children){
-    //             let (mut terminal_node, mut branching_node) = children.children;
-    //             if !terminal_node.is_terminal() {
-    //                 (terminal_node, branching_node) = (branching_node, terminal_node)
-    //             }
-    //
-    //             if terminal_node.get_token().token_type == Constant && (token.token == "+" || token.token == "-") {return false};
-    //             return is_node_expanded_coefficient_variable(&branching_node);
-    //         }
-    //
-    //         is_node_expanded_coefficient_variable(&children.children.0) && is_node_expanded_coefficient_variable(&children.children.1)
-    //     }
-    // }
 
 type NodeCheck = fn(&Node) -> bool;
 ///Check if condition1 applies to child1 and condition2 applies to child2 or vice versa
-fn check_this_and_that(condition1:NodeCheck, condition2:NodeCheck, nodes:&BranchingNode) -> bool{
-    (condition1(&nodes.children.0) && condition2(&nodes.children.1)) || (condition2(&nodes.children.0) && condition1(&nodes.children.1))
+fn check_this_and_that(condition1:NodeCheck, condition2:NodeCheck, node_1:&Node, node_2:&Node) -> bool{
+    (condition1(node_1) && condition2(node_2)) || (condition2(node_1) && condition1(node_2))
 }
 
 fn push_new_node_to_stack(stack: &mut VecDeque<Node>, node_token: Token, child1:Node, child2:Node, node_index:usize){
-    stack.push_back(Branching(node_token, Box::from(BranchingNode { children: (child2, child1)}), node_index));
+    stack.push_back(Branching(node_token, Box::from(child2), Box::from(child1), node_index));
 }
 fn test_validation(){
     let equations: [&str; 6] = [
@@ -381,9 +360,9 @@ fn test_validation(){
 fn index_tree<'a>(original_tree:Node, parent_index:usize, is_left:bool, is_root: bool)-> Node{
     let self_index: usize = if is_root {1} else {parent_index * 2 + if is_left {0} else {1}};
     match original_tree{
-        Branching(token, children, ..) =>{
+        Branching(token, child_1, child_2, ..) =>{
             Branching(token,
-                      Box::from(BranchingNode{children:(index_tree(children.children.0, self_index, true, false), index_tree(children.children.1, self_index, false, false))}),
+                      Box::from(index_tree(*child_1, self_index, true, false)), Box::from(index_tree(*child_2, self_index, false, false)),
                       self_index)
         }
         Terminal(token, ..) => {
@@ -413,29 +392,29 @@ fn get_simplifiable_nodes(parent_node: &Node, found_nodes: Rc<RefCell<Vec<usize>
     //Check children
     //If one is a variable, return false
     //If both are constants, return true
-    if let Branching(_, children, _) = parent_node{
+    if let Branching(_, child_1, child_2, _) = parent_node{
         let child0valid: bool =
-            match &children.children.0{
+            match &**child_1{
                 Terminal(token, _) => {token.token_type == Constant}
                 Branching(..) => {
-                    get_simplifiable_nodes(&children.children.0, Rc::clone(&found_nodes))
+                    get_simplifiable_nodes(&child_1, Rc::clone(&found_nodes))
                 }
             };
 
         let child1valid: bool =
-            match &children.children.1{
+            match &**child_2{
                 Terminal(token, _) => {token.token_type == Constant}
                 Branching(..) => {
-                    get_simplifiable_nodes(&children.children.1, Rc::clone(&found_nodes))
+                    get_simplifiable_nodes(&child_2, Rc::clone(&found_nodes))
                 }
             };
 
         if child0valid && !child1valid {
-            found_nodes.borrow_mut().push(children.children.0.get_index());
+            found_nodes.borrow_mut().push(child_1.get_index());
         }
 
         if !child0valid && child1valid{
-            found_nodes.borrow_mut().push(children.children.1.get_index());
+            found_nodes.borrow_mut().push(child_2.get_index());
         }
 
         return child0valid && child1valid;
@@ -457,9 +436,9 @@ fn print_tree(node: &Node, indent: &String, last: bool){
     }
     println!("{}", node.get_token().token.clone());
 
-    if let Branching(_, children, _) = node{
-        print_tree(&children.children.0, &local_indent, false);
-        print_tree(&children.children.1, &local_indent, true);
+    if let Branching(_, child_1, child_2, _) = node{
+        print_tree(&child_1, &local_indent, false);
+        print_tree(&child_2, &local_indent, true);
     }
 }
 
@@ -487,8 +466,8 @@ fn get_node_by_index(root_node: &Node, index:usize) -> &Node {
             continue;
         };
 
-        if let Branching(_, children, ..) = current_node {
-            current_node = if bit == 1 {&children.children.1} else {&children.children.0}
+        if let Branching(_, child_1,child_2, ..) = current_node {
+            current_node = if bit == 1 {&child_2} else {&child_1}
         }
         else{
             panic!("This code should never run")
@@ -499,28 +478,28 @@ fn get_node_by_index(root_node: &Node, index:usize) -> &Node {
 
 fn evaluate_tree (node: &Node) -> f32{
     match node{
-        Branching(token, next_nodes, ..) =>{
+        Branching(token, child_1, child_2, ..) =>{
             match token.token.as_str() {
                 "+" =>{
-                    evaluate_tree(&next_nodes.children.0) + evaluate_tree(&next_nodes.children.1)
+                    evaluate_tree(&child_1) + evaluate_tree(&child_2)
                 }
                 "-" =>{
-                    evaluate_tree(&next_nodes.children.0) - evaluate_tree(&next_nodes.children.1)
+                    evaluate_tree(&child_1) - evaluate_tree(&child_2)
                 }
                 "*" =>{
-                    evaluate_tree(&next_nodes.children.0) * evaluate_tree(&next_nodes.children.1)
+                    evaluate_tree(&child_1) * evaluate_tree(&child_2)
                 }
                 "/" =>{
-                    evaluate_tree(&next_nodes.children.0) / evaluate_tree(&next_nodes.children.1)
+                    evaluate_tree(&child_1) / evaluate_tree(&child_2)
                 }
                 "^" =>{
-                    evaluate_tree(&next_nodes.children.0).powf(evaluate_tree(&next_nodes.children.1))
+                    evaluate_tree(&child_1).powf(evaluate_tree(&child_2))
                 }
                 _ =>{
                     panic!("Branching nodes should only contain operators")
                 }
             }
-        },
+        }
         Terminal(token, ..) => {
             extract_variable_or_constant(token)
         }
@@ -633,20 +612,20 @@ fn replace_node_at_index<'a>(root_node:Node, new_node:Node, index:usize, path_po
         return new_node
     }
     let path_position = path_position - 1;
-    if let Branching(token, children, current_index) = root_node {
+    if let Branching(token, child_1, child_2, current_index) = root_node {
         let bit =index & (1 << path_position) > 0;
-        let (mut keep_child, mut change_child) = children.children;
+        let (mut keep_child, mut change_child) = (*child_1, *child_2);
 
         let new_children = if bit == false{
             (keep_child, change_child) = (change_child, keep_child);
-            Box::from(BranchingNode { children: (replace_node_at_index(change_child, new_node, index, path_position), keep_child) })
+            (replace_node_at_index(change_child, new_node, index, path_position), keep_child)
         }
         else{
-            Box::from(BranchingNode { children: (keep_child, replace_node_at_index(change_child, new_node, index, path_position)) })
+            (keep_child, replace_node_at_index(change_child, new_node, index, path_position))
         };
 
         Branching(token,
-                  new_children,
+                  Box::from(new_children.0), Box::from(new_children.1),
                   current_index)
     } else {
         unreachable!("Reached end of tree before end of path")
@@ -681,20 +660,20 @@ struct Token<>{
 
 #[derive(Clone)]
 enum Node {
-    Branching(Token, Box<BranchingNode>, usize),
+    Branching(Token, Box<Node>, Box<Node>, usize),
     Terminal(Token, usize)
 }
 
 impl Node{
     fn get_token(&self) -> &Token{
         match self{
-            Branching(token, _, _) => token,
+            Branching(token, ..) => token,
             Terminal(token, _) => token
         }
     }
     fn get_index(&self) -> usize{
         match self{
-            Branching(_,_,index) => *index,
+            Branching(_,_,_,index) => *index,
             Terminal(_, index) => *index
         }
     }
@@ -707,9 +686,9 @@ impl Node{
     fn get_child_of_type(&self, category:TokenCategory) -> Option<&Node>{
         match self {
             Terminal(..) => None,
-            Branching(_, children,_) =>{
-                if children.children.0.get_token().token_type == category {Some(&children.children.0)}
-                else if children.children.1.get_token().token_type == category {Some(&children.children.1)}
+            Branching(_, child_1, child_2,_) =>{
+                if child_1.get_token().token_type == category {Some(child_1)}
+                else if child_2.get_token().token_type == category {Some(child_2)}
                 else {None}
             }
         }
@@ -737,9 +716,9 @@ impl<'a> Iterator for TreeIterator<'a>{
         let current = self.current;
         if let Some(current_node) = current {
             match current_node {
-                Branching(_, children, _) => {
-                    self.current = Some(&children.children.0);
-                    self.unexplored.push_back(&children.children.1);
+                Branching(_, child_1, child_2, _) => {
+                    self.current = Some(&child_1);
+                    self.unexplored.push_back(&child_2);
                 }
                 Terminal(..) => {
                     self.current = self.unexplored.pop_back();
@@ -754,4 +733,9 @@ impl<'a> Iterator for TreeIterator<'a>{
 #[derive(Clone)]
 struct BranchingNode{
     children: (Node, Node)}
+
+struct TreeBranch{
+    start: usize,
+    ends:Vec<usize>
+}
 
