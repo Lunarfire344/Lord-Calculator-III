@@ -14,10 +14,10 @@ fn main() {
     let mut tokens: Vec<Token> = Vec::with_capacity(10);
 
     test_validation();
-    let mut user_input: String = read!("{}\n");
+    // let mut user_input: String = read!("{}\n");
+    let mut user_input:String = String::from("3x^2+2x+5x+3x+2x^2");
     user_input.retain(|c| !c.is_whitespace());
     let mut input = user_input.as_str();
-    let mut unique_variables: Vec<String> = Vec::new();
     if !validate_expression(&input){
         panic!("Invalid expression");
     }
@@ -28,14 +28,9 @@ fn main() {
             println!("Remaining untokenized data: {input}");
             (current_token, input) = build_token_of_type(category.clone(), &input);
 
-            if category == Variable && !unique_variables.contains(&current_token.token) {
-                unique_variables.push(current_token.token.clone());
-            }
             tokens.push(current_token);
-
         }
     }
-    let unique_variables = unique_variables;
 
     //Handle implicit operations
     {
@@ -109,9 +104,9 @@ fn main() {
             }
             loop_index +=  if vec_shifted {0} else {1};
             vec_shifted = false;
-            for i in &operand_stack {
-                print_tree(i, &mut String::from(""), true);
-            }
+            // for i in &operand_stack {
+            //     print_tree(i, &mut String::from(""), true);
+            // }
         }
     }
 
@@ -124,8 +119,27 @@ fn main() {
     //Rebuild the tree to index it. This feels incredibly inefficient.
     let mut root_node = index_tree(operand_stack.pop_front().unwrap(), 0, false, true);
 
-    //Tree successfully constructed
-    print_tree(&root_node, &mut String::from(""), true);
+    let mut unique_variables: Vec<Node> = Vec::new();
+    let iterator = construct_tree_iterator(&root_node);
+    for node in iterator{
+        if vec_contains_identical_node(&unique_variables, node) {continue};
+
+        match node{
+            Terminal(token, index) => {
+                if token.token_type != Variable { continue}
+                let parent_node =get_parent_of_node(&root_node, *index).get_token();
+                if parent_node.token_type == Operator && parent_node.token == "^" {continue}
+
+                unique_variables.push(node.clone());
+            }
+            Branching(token, ..) =>{
+                if token.token != "^" {continue}
+                if let None = node.get_child_of_type(Variable) {continue}
+
+                unique_variables.push(node.clone());
+            }
+        }
+    }
 
     if unique_variables.len() == 0{
         //No variables, evaluate as normal.
@@ -133,12 +147,16 @@ fn main() {
         return;
     }
 
-    root_node = combine_all_variables(root_node, &unique_variables);
+    println!("Tree before pruning:");
     print_tree(&root_node, &mut String::from(""), true);
-    todo!("This code currently assumes ALL operators are commutative.");
+    root_node = combine_all_variables(root_node, &unique_variables);
+    println!("Tree after variable commutation:");
+    print_tree(&root_node, &mut String::from(""), true);
+
     let simplifiable_nodes = Rc::new(RefCell::new(Vec::<usize>::new()));
     get_simplifiable_nodes(&root_node, Rc::clone(&simplifiable_nodes));
 
+    todo!("This code currently assumes ALL operators are commutative.");
     for index in simplifiable_nodes.borrow().iter(){
         let index = *index;
         let node_value = evaluate_tree(get_node_by_index(&root_node, index));
@@ -157,6 +175,13 @@ fn main() {
 
     //To implement the commutative property, use the same pass when identifying simplifiable nodes to flag all un-simplifiable nodes. All un-simplifiable nodes can either be simplified to coefficient-variable(C-V) form, or will require the commutative property.
     //NOTE: Multiplication doesn't disqualify a branch for this, so long as exactly one of the operands is a variable.
+}
+
+fn vec_contains_identical_node(list:&Vec<Node>, other_node:&Node) -> bool{
+    for node in list {
+        if node.is_branch_equal_to(other_node) {return true}
+    }
+    false
 }
 
 fn get_position_of_first_one(number:usize) -> usize{
@@ -204,76 +229,93 @@ fn is_node_variable_coefficient(node:&Node) -> bool{
 }
 
 fn is_node_variable_exponent(node:&Node) -> bool{
-    if let Branching(token, child_1, child_2, _) = node{
+    if let Branching(token, child_1, _, _) = node{
         if token.token != "^" {return false;}
+        //Only check the left child because the exponent base is always the left node
         return child_1.get_token().token_type == Variable;
     }
-    return false;
-}
-
-///is the node equivalent to 2 * variable
-fn is_node_variable_sum(node:&Node) -> bool{
-    if let Branching(token, child_1, child_2, ..) = node{
-        if token.token != "+" && token.token != "-" {return false};
-
-        if child_1.get_token().token_type != Variable || child_2.get_token().token_type != Variable {return false};
-
-        return child_1.get_token().token == child_2.get_token().token
-    }
-
     false
 }
 
 fn combine_nodes(mut root_node: Node, index1:usize, index2: usize) -> Node
 {
-    let token1: Token;
-    let token2: Token;
+    let token1: Option<Token>;
+    let token2: Option<Token>;
     let variable_number_1: Option<f32>;
     let variable_number_2: Option<f32>;
+    let variable:Option<Token>;
+    let is_constant:bool;
     {
         let node1 = get_node_by_index(&root_node, index1);
         let node2 = get_node_by_index(&root_node, index2);
-        token1 = node1.get_token().clone();
-        token2 = node2.get_token().clone();
+        let temp_token_1 = node1.get_token();
+        let temp_token_2 = node2.get_token();
+        todo!("Create a get_child_of_type that recursively searches ALL children");
+        //It is also likely wise to note in get_child_of_type that it only looks at the first generation
+        variable = if temp_token_1.token_type == Variable { Some(temp_token_1.clone()) }
+            else if temp_token_2.token_type == Variable{ Some(temp_token_2.clone()) }
+            else if let Some(node) = node1.get_child_of_type(Variable) { Some(node.get_token().clone()) }
+            else if let Some(other_node) = node2.get_child_of_type(Variable) { Some(other_node.get_token().clone()) }
+            else {None};
+        is_constant = !variable.is_some();
+
+        (token1, token2) = if is_constant {(Some(temp_token_1.clone()), Some(temp_token_2.clone()))} else {(None, None)};
 
         variable_number_1 = node1.get_variable_coefficient();
         variable_number_2 = node2.get_variable_coefficient();
     }
 
-    if token1.token_type == Constant && token2.token_type == Constant{
-        let number= token1.token.parse::<f32>().unwrap() + token2.token.parse::<f32>().unwrap();
+    if is_constant{
+        let number= token1.unwrap().token.parse::<f32>().unwrap() + token2.unwrap().token.parse::<f32>().unwrap();
         root_node = replace_node_at_index(root_node, construct_constant(number, index1), index1, get_position_of_first_one(index1));
     }
+    else {
+        root_node = replace_node_at_index(root_node, construct_variable_coefficient_node(variable.unwrap(), variable_number_1.unwrap() + variable_number_2.unwrap(), index1), index1, get_position_of_first_one(index1));
+    }
 
-    let variable = if token1.token_type == Variable {token1} else {token2};
-
-    root_node = replace_node_at_index(root_node, construct_variable_coefficient_node(variable, variable_number_1.unwrap() + variable_number_2.unwrap(), index1), index1, get_position_of_first_one(index1));
     let new_node = get_identity_node(get_parent_of_node(&root_node, index2), index2);
 
-    return replace_node_at_index(root_node, new_node, index2, get_position_of_first_one(index2))
+    replace_node_at_index(root_node, new_node, index2, get_position_of_first_one(index2))
 }
 
-fn combine_all_variables(mut root_node:Node, variables:&Vec<String>) -> Node{
-    let tree_iterator = TreeIterator{root:&root_node, current:Some(&root_node), unexplored:VecDeque::new()};
+fn combine_all_variables(mut root_node:Node, variables:&Vec<Node>) -> Node{
+    let mut tree_iterator = construct_tree_iterator(&root_node);
     let mut result: Vec<Vec<usize>> = Vec::with_capacity(variables.len());
     for _ in 0..variables.len(){
         result.push(Vec::new());
     }
 
-    for node in tree_iterator{
-        let variable_index = variables.iter().position(|thing| *thing == node.get_token().token);
-        if let Some(index) = variable_index {
-            let node_index = node.get_index();
-            result[index].push(
-                if is_node_variable_coefficient(get_parent_of_node(&root_node, node_index)) {
-                    node_index / 2} else {node_index }
-            );
+    while let Some(node) = tree_iterator.next(){
+        println!("{}", node.index());
+        if is_node_variable_coefficient(node) {
+            //This if is essentially an assertion that the node is branching
+            if let Branching(_, child1, child2, _) = node {
+                let variable_index:usize;
+                let node_index:usize;
+                if let Some(index) = variables.iter().position(|thing| thing.is_branch_equal_to(&child1)) {
+                    variable_index = index;
+                    node_index = child1.index() / 2;
+                }
+                else{
+                    variable_index = variables.iter().position(|thing| thing.is_branch_equal_to(&child2)).unwrap();
+                    node_index = child2.index() / 2;
+                }
+
+                result[variable_index].push(node_index);
+                tree_iterator.skip_next_branch = true;
+            }
+            else {unreachable!("Nodes that passes is_node_variable_coeficient should always be branching")}
+        }
+        else{
+            if let Some(index) = variables.iter().position(|thing| thing.is_branch_equal_to(&node)) {
+                result[index].push(node.index());
+            }
         }
     };
 
     for mut result_set in result{
         while result_set.len() > 1{
-            root_node = combine_nodes(root_node, result_set.swap_remove(0), result_set.swap_remove(0))
+            root_node = combine_nodes(root_node, result_set[0], result_set.swap_remove(1))
         }
     }
     root_node
@@ -286,8 +328,8 @@ fn construct_variable_coefficient_node(variable:Token, coefficient:f32, index:us
     Branching(new_token, constant_child,variable_child, index)
 }
 
-fn get_parent_of_node(root_node: &Node, index:usize) -> &Node {
-    get_node_by_index(root_node, index/ 2 )
+fn get_parent_of_node(root_node: &Node, child_index:usize) -> &Node {
+    get_node_by_index(root_node, child_index/ 2 )
 }
 
 ///Return the node that will make the parent node an identity
@@ -305,32 +347,6 @@ fn get_identity_node(parent_node: &Node, index:usize) -> Node{
 
 fn construct_constant(value:f32, index:usize) -> Node{
     Terminal(Token{token_type:Constant, token:value.to_string()}, index)
-}
-
-///This function assumes that its input will contain only matching variables
-fn get_variable_combination_result(first_node:&Node, second_node:&Node) -> Node {
-    let final_coefficient: i32 =
-        match first_node {
-            Terminal(..) => { 1 },
-            Branching(..) => {
-                if is_node_variable_sum(first_node) { 2 } else {
-                    first_node.get_child_of_type(Constant).unwrap().get_token().token.parse().unwrap()
-                }
-            }
-        } +
-            match second_node {
-                Terminal(..) => { 1 },
-                Branching(..) => {
-                    if is_node_variable_sum(second_node) { 2 } else {
-                        second_node.get_child_of_type(Constant).unwrap().get_token().token.parse().unwrap()
-                    }
-                }
-            };
-
-    let constant_child = Terminal(Token{token_type:Constant, token:final_coefficient.to_string()}, first_node.get_index() * 2);
-    let variable_child = Terminal(first_node.get_token().clone(), first_node.get_index() * 2 + 1);
-    let new_token = Token{token_type:Operator, token: String::from("*")};
-    Branching(new_token, Box::from(constant_child),Box::from(variable_child), first_node.get_index())
 }
 
 type NodeCheck = fn(&Node) -> bool;
@@ -410,11 +426,11 @@ fn get_simplifiable_nodes(parent_node: &Node, found_nodes: Rc<RefCell<Vec<usize>
             };
 
         if child0valid && !child1valid {
-            found_nodes.borrow_mut().push(child_1.get_index());
+            found_nodes.borrow_mut().push(child_1.index());
         }
 
         if !child0valid && child1valid{
-            found_nodes.borrow_mut().push(child_2.get_index());
+            found_nodes.borrow_mut().push(child_2.index());
         }
 
         return child0valid && child1valid;
@@ -632,6 +648,10 @@ fn replace_node_at_index<'a>(root_node:Node, new_node:Node, index:usize, path_po
     }
 }
 
+fn construct_tree_iterator(root_node: &'_ Node) -> TreeIterator<'_> {
+    TreeIterator{current:None, root_node, unexplored:VecDeque::new(), skip_next_branch:false}
+}
+
 // fn print_token_category(category: TokenCategory) {
 //     let x =
 //     match category{
@@ -652,7 +672,7 @@ enum TokenCategory {
     Parenthesis(bool),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Token<>{
     token_type: TokenCategory,
     token: String
@@ -671,7 +691,7 @@ impl Node{
             Terminal(token, _) => token
         }
     }
-    fn get_index(&self) -> usize{
+    fn index(&self) -> usize{
         match self{
             Branching(_,_,_,index) => *index,
             Terminal(_, index) => *index
@@ -697,45 +717,72 @@ impl Node{
         match self{
             Terminal(token, ..) => {if token.token_type == Variable {Some(1f32)} else {None}},
             Branching(token, ..) =>{
-                if token.token != "*" {None} else{ Some(self.get_child_of_type(Constant).unwrap().get_token().token.parse().unwrap())}
+                //If this is a multiplication node, assume that it is a variable-coefficient node.
+                if token.token == "*" {return Some(self.get_child_of_type(Constant).unwrap().get_token().token.parse().unwrap())}
+
+                None
+            }
+        }
+    }
+    fn is_branch_equal_to(&self, other: &Node) -> bool {
+        let other_token = other.get_token();
+        if self.get_token().token_type != other_token.token_type { return false};
+
+        match self {
+            Terminal(token, _) => {
+                token == other_token
+            },
+            Branching(_, child_1, child_2, _) => {
+                let (other_child_1, other_child_2) = if let Branching(_, one, two, _) = other
+                { (one, two) } else { unreachable!() };
+
+                let condition_1 = child_1.is_branch_equal_to(other_child_1) && child_2.is_branch_equal_to(other_child_2);
+                let condition_2 = child_1.is_branch_equal_to(other_child_2) && child_2.is_branch_equal_to(other_child_1);
+
+                condition_1 || condition_2
             }
         }
     }
 }
 
 struct TreeIterator<'a>{
-    root: &'a Node,
     current: Option<&'a Node>,
-    unexplored: VecDeque<&'a Node>
+    root_node: &'a Node,
+    unexplored: VecDeque<&'a Node>,
+    skip_next_branch:bool
 }
 
-impl<'a> Iterator for TreeIterator<'a>{
-    type Item = &'a Node;
+impl<'b> Iterator for TreeIterator<'b>{
+    type Item = &'b Node;
 
     fn next(&mut self) -> Option<Self::Item>{
-        let current = self.current;
-        if let Some(current_node) = current {
+        if self.skip_next_branch
+        {
+            self.current = self.unexplored.pop_back();
+            self.skip_next_branch = false;
+            return self.current
+        };
+
+        self.current = if let Some(current_node) = self.current {
             match current_node {
                 Branching(_, child_1, child_2, _) => {
-                    self.current = Some(&child_1);
                     self.unexplored.push_back(&child_2);
+                    Some(&child_1)
                 }
                 Terminal(..) => {
-                    self.current = self.unexplored.pop_back();
+                    self.unexplored.pop_back()
                 }
             }
         }
+        else{
+            Some(self.root_node)
+        };
 
-        current
+        self.current
     }
 }
-
-#[derive(Clone)]
-struct BranchingNode{
-    children: (Node, Node)}
 
 struct TreeBranch{
     start: usize,
     ends:Vec<usize>
 }
-
