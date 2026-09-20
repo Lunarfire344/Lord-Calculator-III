@@ -65,8 +65,9 @@ fn main() {
     }
     println!();
 
-    let mut operand_stack: VecDeque<Node> = VecDeque::with_capacity(tokens.len());
+    let mut operand_stack: VecDeque<&Node> = VecDeque::with_capacity(tokens.len());
     let mut operator_stack: VecDeque<Token> = VecDeque::with_capacity(5);
+    let mut tree: Vec<Node> = Vec::with_capacity(tokens.len());
 
     {
         let mut loop_index: usize = 0;
@@ -79,7 +80,8 @@ fn main() {
             debug_index += 1;
             match tokens[loop_index].token_type {
                 Constant | Variable => {
-                    operand_stack.push_back(Terminal(tokens.remove(loop_index), 0));
+                    tree.push(Terminal(tokens.remove(loop_index)));
+                    operand_stack.push_back(tree.last().unwrap());
                     vec_shifted = true;
                 }
                 Operator => {
@@ -364,8 +366,10 @@ fn check_this_and_that(condition1:NodeCheck, condition2:NodeCheck, node_1:&Node,
     (condition1(node_1) && condition2(node_2)) || (condition2(node_1) && condition1(node_2))
 }
 
-fn push_new_node_to_stack(stack: &mut VecDeque<Node>, node_token: Token, child1:Node, child2:Node, node_index:usize){
-    stack.push_back(Branching(node_token, Box::from(child2), Box::from(child1), node_index));
+fn push_new_node_to_stack(stack: &mut VecDeque<&Node>, node_token: Token, child1:usize, child2:usize, mut nodes:Vec<Node>) -> Vec<Node>{
+    nodes.push(Branching(node_token, child2, child1));
+    stack.push_back(&nodes.last().unwrap());
+    return nodes;
 }
 fn test_validation(){
     let equations: [&str; 6] = [
@@ -539,7 +543,7 @@ fn extract_variable_or_constant(token: &Token) -> f32{
     }
 }
 
-fn process_operator<'a>(mut operator_stack: VecDeque<Token>, incoming: Token, operands: &mut VecDeque<Node>) -> VecDeque<Token>{
+fn process_operator<'a>(mut operator_stack: VecDeque<Token>, incoming: Token, operands: &mut VecDeque<&Node>, nodes:Vec<Node>) -> VecDeque<Token>{
     if let Some(last_operator_option) = operator_stack.back(){
         // println!("{x}");
         //Treat a left parenthesis as empty stack
@@ -556,16 +560,16 @@ fn process_operator<'a>(mut operator_stack: VecDeque<Token>, incoming: Token, op
             }
             cmp::Ordering::Greater =>{
                 println!("Operator of greater precedence found on the stack");
-                let child1:Node = operands.pop_back().unwrap();
-                let child2:Node =  operands.pop_back().unwrap();
-                push_new_node_to_stack(operands, operator_stack.pop_back().unwrap(), child1, child2, 0);
+                let child1:&Node = operands.pop_back().unwrap();
+                let child2:&Node =  operands.pop_back().unwrap();
+                push_new_node_to_stack(operands, operator_stack.pop_back().unwrap(), child1, child2, nodes);
                 operator_stack = process_operator(operator_stack, incoming, operands);
             }
             cmp::Ordering::Equal =>{
                 println!("Operator of equal precedence");
                 let child1:Node = operands.pop_back().unwrap();
                 let child2:Node =  operands.pop_back().unwrap();
-                push_new_node_to_stack(operands, operator_stack.pop_back().unwrap(), child1, child2, 0);
+                push_new_node_to_stack(operands, operator_stack.pop_back().unwrap(), child1, child2, nodes);
                 operator_stack.push_back(incoming);
             }
         }
@@ -688,9 +692,9 @@ struct Token<>{
 }
 
 #[derive(Clone)]
-enum Node {
-    Branching(Token, Box<Node>, Box<Node>, usize),
-    Terminal(Token, usize)
+enum Node<> {
+    Branching(Token, usize, usize),
+    Terminal(Token)
 }
 
 impl Node{
