@@ -134,7 +134,7 @@ fn main() {
             }
             Branching(token, ..) =>{
                 if token.token != "^" {continue}
-                if let None = node.get_child_of_type(Variable) {continue}
+                if let None = node.get_immediate_child_of_type(Variable) {continue}
 
                 unique_variables.push(node.clone());
             }
@@ -250,13 +250,13 @@ fn combine_nodes(mut root_node: Node, index1:usize, index2: usize) -> Node
         let node2 = get_node_by_index(&root_node, index2);
         let temp_token_1 = node1.get_token();
         let temp_token_2 = node2.get_token();
-        todo!("Create a get_child_of_type that recursively searches ALL children");
-        //It is also likely wise to note in get_child_of_type that it only looks at the first generation
+
         variable = if temp_token_1.token_type == Variable { Some(temp_token_1.clone()) }
             else if temp_token_2.token_type == Variable{ Some(temp_token_2.clone()) }
-            else if let Some(node) = node1.get_child_of_type(Variable) { Some(node.get_token().clone()) }
-            else if let Some(other_node) = node2.get_child_of_type(Variable) { Some(other_node.get_token().clone()) }
+            else if let Some(node) = node1.get_any_child_of_type(Variable) { Some(node.get_token().clone()) }
+            else if let Some(other_node) = node2.get_any_child_of_type(Variable) { Some(other_node.get_token().clone()) }
             else {None};
+        todo!("Detect exponents and pass them ");
         is_constant = !variable.is_some();
 
         (token1, token2) = if is_constant {(Some(temp_token_1.clone()), Some(temp_token_2.clone()))} else {(None, None)};
@@ -270,7 +270,7 @@ fn combine_nodes(mut root_node: Node, index1:usize, index2: usize) -> Node
         root_node = replace_node_at_index(root_node, construct_constant(number, index1), index1, get_position_of_first_one(index1));
     }
     else {
-        root_node = replace_node_at_index(root_node, construct_variable_coefficient_node(variable.unwrap(), variable_number_1.unwrap() + variable_number_2.unwrap(), index1), index1, get_position_of_first_one(index1));
+        root_node = replace_node_at_index(root_node, construct_variable_coefficient_node(variable.unwrap(), variable_number_1.unwrap() + variable_number_2.unwrap(), 0f32, index1), index1, get_position_of_first_one(index1));
     }
 
     let new_node = get_identity_node(get_parent_of_node(&root_node, index2), index2);
@@ -321,10 +321,19 @@ fn combine_all_variables(mut root_node:Node, variables:&Vec<Node>) -> Node{
     root_node
 }
 
-fn construct_variable_coefficient_node(variable:Token, coefficient:f32, index:usize) -> Node{
+fn construct_variable_coefficient_node(variable:Token, coefficient:f32, exponent:f32, index:usize) -> Node{
     let constant_child = Box::from(construct_constant(coefficient, index * 2));
-    let variable_child = Box::from(Terminal(variable, index * 2 + 1));
     let new_token = Token{token_type:Operator, token: String::from("*")};
+
+    if exponent != 1f32{
+        let exponent_token = Token{token_type:Operator, token:String::from("^")};
+        let exponent_power = Box::from(construct_constant(exponent, (index * 2 + 1) * 2 + 1));
+        let variable_child = Box::from(Terminal(variable, (index * 2 + 1) *2));
+        let exponent_child = Box::from(Branching(exponent_token, variable_child, exponent_power, index * 2 + 1));
+        return Branching(new_token, constant_child,exponent_child, index);
+    }
+
+    let variable_child = Box::from(Terminal(variable, index * 2 + 1));
     Branching(new_token, constant_child,variable_child, index)
 }
 
@@ -703,7 +712,7 @@ impl Node{
             Branching(..) => false
         }
     }
-    fn get_child_of_type(&self, category:TokenCategory) -> Option<&Node>{
+    fn get_immediate_child_of_type(&self, category:TokenCategory) -> Option<&Node>{
         match self {
             Terminal(..) => None,
             Branching(_, child_1, child_2,_) =>{
@@ -713,12 +722,27 @@ impl Node{
             }
         }
     }
+    fn get_any_child_of_type(&self, category:TokenCategory) -> Option<&Node>{
+        match self {
+            Terminal(token, _) =>{
+                if token.token_type == category { return Some(self)}
+                else{ None}
+            }
+            Branching(_, child1, child2, _) => {
+                if child1.get_token().token_type == category {Some(child1)}
+                else if child2.get_token().token_type == category {Some(child2)}
+                else if let Some(thing) = child1.get_any_child_of_type(category.clone()) {Some(thing)}
+                else if let Some(thing) = child2.get_any_child_of_type(category) {Some(thing)}
+                else {None}
+            }
+        }
+    }
     fn get_variable_coefficient(&self) -> Option<f32>{
         match self{
             Terminal(token, ..) => {if token.token_type == Variable {Some(1f32)} else {None}},
             Branching(token, ..) =>{
                 //If this is a multiplication node, assume that it is a variable-coefficient node.
-                if token.token == "*" {return Some(self.get_child_of_type(Constant).unwrap().get_token().token.parse().unwrap())}
+                if token.token == "*" {return Some(self.get_immediate_child_of_type(Constant).unwrap().get_token().token.parse().unwrap())}
 
                 None
             }
