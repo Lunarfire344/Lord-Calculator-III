@@ -267,47 +267,49 @@ fn validate_expression(input: &str) -> bool{
 //     false
 // }
 //
-// fn combine_nodes(mut root_node: Node, index1:usize, index2: usize) -> Node
-// {
-//     let token1: Option<Token>;
-//     let token2: Option<Token>;
-//     let variable_number_1: Option<f32>;
-//     let variable_number_2: Option<f32>;
-//     let variable:Option<Token>;
-//     let is_constant:bool;
-//     {
-//         let node1 = get_node_by_index(&root_node, index1);
-//         let node2 = get_node_by_index(&root_node, index2);
-//         let temp_token_1 = node1.get_token();
-//         let temp_token_2 = node2.get_token();
-//
-//         variable = if temp_token_1.token_type == Variable { Some(temp_token_1.clone()) }
-//             else if temp_token_2.token_type == Variable{ Some(temp_token_2.clone()) }
-//             else if let Some(node) = node1.get_any_child_of_type(Variable) { Some(node.get_token().clone()) }
-//             else if let Some(other_node) = node2.get_any_child_of_type(Variable) { Some(other_node.get_token().clone()) }
-//             else {None};
-//         todo!("Detect exponents and pass them");
-//         is_constant = !variable.is_some();
-//
-//         (token1, token2) = if is_constant {(Some(temp_token_1.clone()), Some(temp_token_2.clone()))} else {(None, None)};
-//
-//         variable_number_1 = node1.get_variable_coefficient();
-//         variable_number_2 = node2.get_variable_coefficient();
-//     }
-//
-//     if is_constant{
-//         let number= token1.unwrap().token.parse::<f32>().unwrap() + token2.unwrap().token.parse::<f32>().unwrap();
-//         root_node = replace_node_at_index(root_node, construct_constant(number, index1), index1, get_position_of_first_one(index1));
-//     }
-//     else {
-//         root_node = replace_node_at_index(root_node, construct_variable_coefficient_node(variable.unwrap(), variable_number_1.unwrap() + variable_number_2.unwrap(), 0f32, index1), index1, get_position_of_first_one(index1));
-//     }
-//
-//     let new_node = get_identity_node(get_parent_of_node(&root_node, index2), index2);
-//
-//     replace_node_at_index(root_node, new_node, index2, get_position_of_first_one(index2))
-// }
-//
+fn combine_nodes(mut node_vec: Vec<Node>, index1:usize, index2: usize) -> Node
+{
+    let token1: Option<Token>;
+    let token2: Option<Token>;
+    let variable_number_1: Option<f32>;
+    let variable_number_2: Option<f32>;
+    let variable:Option<Token>;
+    let is_constant:bool;
+    {
+        let node1 = node_vec[index1];
+        let node2 = node_vec[index2];
+        let temp_token_1 = node1.get_token();
+        let temp_token_2 = node2.get_token();
+
+        variable = if temp_token_1.token_type == Variable { Some(temp_token_1.clone()) }
+            else if temp_token_2.token_type == Variable{ Some(temp_token_2.clone()) }
+            else if let Some(node) = get_any_child_of_type(&node_vec, index1, Variable) { Some(node.get_token().clone()) }
+            else if let Some(other_node) = get_any_child_of_type(&node_vec, index2, Variable) { Some(other_node.get_token().clone()) }
+            else {None};
+        // todo!("Detect exponents and pass them");
+        //It would likely be cleanest to give all variables exponents of one. However, this makes the tree bigger.
+        //It might also be wise to pass this function the exponents and variables (via the new struct), rather than calculating them again.
+        is_constant = !variable.is_some();
+
+        (token1, token2) = if is_constant {(Some(temp_token_1.clone()), Some(temp_token_2.clone()))} else {(None, None)};
+
+        variable_number_1 = get_variable_coefficient(&node_vec, index1);
+        variable_number_2 = get_variable_coefficient(&node_vec, index2);
+    }
+
+    if is_constant{
+        let number= token1.unwrap().token.parse::<f32>().unwrap() + token2.unwrap().token.parse::<f32>().unwrap();
+        root_node = replace_node_at_index(root_node, construct_constant(number, index1), index1, get_position_of_first_one(index1));
+    }
+    else {
+        root_node = replace_node_at_index(root_node, construct_variable_coefficient_node(variable.unwrap(), variable_number_1.unwrap() + variable_number_2.unwrap(), 0f32, index1), index1, get_position_of_first_one(index1));
+    }
+
+    let new_node = get_identity_node(get_parent_of_node(&root_node, index2), index2);
+
+    replace_node_at_index(root_node, new_node, index2, get_position_of_first_one(index2))
+}
+
 fn combine_all_variables(tree:Vec<Node>, root_index:usize, variables:Vec<VariableTerm>) -> Node{
     let mut tree_iterator = construct_tree_iterator(&tree, root_index);
     let mut result: Vec<Vec<usize>> = Vec::with_capacity(variables.len());
@@ -736,33 +738,22 @@ impl Node{
         }
     }
 
-    // fn get_any_child_of_type(&self, category:TokenCategory) -> Option<&Node>{
-    //     match self {
-    //         Terminal(token, _) =>{
-    //             if token.token_type == category { return Some(self)}
-    //             else{ None}
-    //         }
-    //         Branching(_, child1, child2, _) => {
-    //             if child1.get_token().token_type == category {Some(child1)}
-    //             else if child2.get_token().token_type == category {Some(child2)}
-    //             else if let Some(thing) = child1.get_any_child_of_type(category.clone()) {Some(thing)}
-    //             else if let Some(thing) = child2.get_any_child_of_type(category) {Some(thing)}
-    //             else {None}
-    //         }
-    //     }
-    // }
-    // fn get_variable_coefficient(&self) -> Option<f32>{
-    //     match self{
-    //         Terminal(token, ..) => {if token.token_type == Variable {Some(1f32)} else {None}},
-    //         Branching(token, ..) =>{
-    //             //If this is a multiplication node, assume that it is a variable-coefficient node.
-    //             if token.token == "*" {return Some(self.get_immediate_child_of_type(Constant).unwrap().get_token().token.parse().unwrap())}
-    //
-    //             None
-    //         }
-    //     }
-    // }
 
+
+
+}
+
+fn get_variable_coefficient(node_vec:&Vec<Node>, index:usize) -> Option<f32>{
+    match &node_vec[index]{
+        Terminal(token, ..) => {if token.token_type == Variable {Some(1f32)} else {None}},
+        Branching(token, ..) =>{
+            //If this is a multiplication node, assume that it is a variable-coefficient node.
+            println!("I cannot imagine that this detects exponents correctly");
+            if token.token == "*" {return Some(get_immediate_child_of_type(node_vec, index, Constant).unwrap().get_token().token.parse().unwrap())}
+
+            None
+        }
+    }
 }
 
 //Assumes that the two nodes are in the same vector
@@ -783,6 +774,19 @@ fn is_branch_equal_to(vec_1:&Vec<Node>, vec_2:Option<&Vec<Node>>, index_1:usize,
             let condition_2 = is_branch_equal_to(vec_1, vec_2, *child_1, other_child_2) && is_branch_equal_to(vec_1, vec_2, *child_2, other_child_1);
 
             condition_1 || condition_2
+        }
+    }
+}
+
+fn get_any_child_of_type(node_vec:&Vec<Node>, index:usize, category:TokenCategory) -> Option<&Node>{
+    let node = &node_vec[index];
+    if node.get_token().token_type == category {return Some(node)}
+    match node {
+        Terminal(..) =>{None},
+        Branching(_, child1, child2, _, _) => {
+            if let Some(thing) = get_any_child_of_type(node_vec, *child1, category.clone()) {Some(thing)}
+            else if let Some(thing) = get_any_child_of_type(node_vec, *child2, category) {Some(thing)}
+            else {None}
         }
     }
 }
