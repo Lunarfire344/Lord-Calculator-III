@@ -5,10 +5,10 @@ mod tests{
     #[test]
     fn variable_exponent_construction(){
         let mut vector: Vec<Node> = Vec::with_capacity(5);
-        let variable = Token{token_type:Variable, token:"X".to_string()};
-        let coefficient = 4f32;
-        let exponent = 3f32;
-        construct_variable_coefficient_node(&mut vector, variable.clone(), coefficient, exponent, 0);
+        let variable = Token{token_type:Variable, token:"X"};
+        let coefficient = (4f32).to_string();
+        let exponent = (3f32).to_string();
+        construct_variable_coefficient_node(&mut vector, variable.clone(), coefficient.as_str(), exponent.as_str(), 0);
         assert_eq!(5, vector.len());
         assert_eq!(vector[0].get_token().token, coefficient.to_string());
         assert_eq!(vector[1].get_token().token, exponent.to_string());
@@ -39,62 +39,87 @@ use crate::TokenCategory::{Constant, Operator, Parenthesis, Variable};
 
 const OPERATOR_PRECEDENCE_KEYS: [char; 6] = ['^', '*', '/', '+', '-', '='];
 const OPERATOR_PRECEDENCE_VALUES: [i32; 6] = [2,1,1,0,0,-1];
+const COMMUTABLE_OPERATORS: [&str;2] = ["*", "+"];
 fn main() {
     // todo!("Test that is_branch_equal works on nodes with different child reference indices (i.e. they are in different vectors), but the same tokens");
     //It probably doesn't
-    let mut rawr:Vec<Node> = Vec::with_capacity(5);
-    let variable = Token{token_type:Variable, token:"X".to_string()};
-    let coefficient = 4f32;
-    let exponent = 3f32;
-    construct_variable_coefficient_node(&mut rawr, variable.clone(), coefficient, exponent, 0);
-    print_tree(&rawr, 4, &String::from(""), true);
-    return;
-    let mut tokens: Vec<Token> = Vec::with_capacity(10);
 
-    test_validation();
+    // test_validation();
     // let mut user_input: String = read!("{}\n");
-    let mut user_input:String = String::from("1 + 2^4");
+
+    let mut user_input = String::from("2 + 2");
     user_input.retain(|c| !c.is_whitespace());
-    let mut input = user_input.as_str();
+
+    let (tree, unique_variables, root_index) = build_tree_from_string(user_input);
+
+    if unique_variables.len() == 0{
+        //No variables, evaluate as normal.
+        println!("{}", evaluate_tree(&tree, root_index));
+        return;
+    }
+
+    // root_node = combine_all_variables(root_node, &unique_variables);
+
+    // println!("Tree after variable commutation:");
+    // print_tree(&root_node, &mut String::from(""), true);
+    //
+    // let simplifiable_nodes = Rc::new(RefCell::new(Vec::<usize>::new()));
+    // get_simplifiable_nodes(&root_node, Rc::clone(&simplifiable_nodes));
+
+    // todo!("This code currently assumes ALL operators are commutative.");
+    // for index in simplifiable_nodes.borrow().iter(){
+    //     let index = *index;
+    //     let node_value = evaluate_tree(get_node_by_index(&root_node, index));
+    //     root_node = replace_node_at_index(root_node, Terminal(Token { token_type: Constant, token: node_value.to_string() }, index), index, get_position_of_first_one(index));
+    //     print_tree(&root_node, &mut String::from(""), true);
+    // }
+
+    //STEPS TO SOLVE FOR VARIABLES
+    //1: Simplify any constants and combine variables
+    //1a If a branching node has one constant child and one branching child which contains the same operator as itself, and that branching child has one constant and one variable as operands, the first branching node can be replaced
+    //with a new branching node with a constant child containing the result of the original node's operator applied to the two constants, and the other child containing the variable.
+    //1b To simplify constant operations, identify the highest point on the tree with no variable descendants, and then replace that node with a constant containing the return value of evaluate_tree() when called on that node.
+    //1.5 Account for the commutative property
+    //2: Apply the distributive property
+    //3: Isolate (somehow)
+
+    //To implement the commutative property, use the same pass when identifying simplifiable nodes to flag all un-simplifiable nodes. All un-simplifiable nodes can either be simplified to coefficient-variable(C-V) form, or will require the commutative property.
+    //NOTE: Multiplication doesn't disqualify a branch for this, so long as exactly one of the operands is a variable.
+}
+
+fn explicitize_implicit_operators(tokens:&mut Vec<Token>){
+    let mut i = 0;
+    while i < tokens.len()
+    {
+        if i > 0 && tokens[i].token_type == Variable && (tokens[i - 1].token_type == Variable || tokens[i-1].token_type == Constant) {
+            tokens.insert(i, Token{token_type: Operator, token:"*"});
+            //Skip forward a token, as the next token in the list is now the one that we just checked.
+            i += 1;
+        }
+        if i < (tokens.len() - 1) && (tokens[i].token_type == Variable || tokens[i].token_type == Constant) && tokens[i+1].token_type == Parenthesis(true){
+            tokens.insert(i+1, Token{token_type: Operator, token:"*"})
+        }
+        if i == 0 && tokens[i].token == "-"{
+            tokens.insert(0, Token{token_type:Constant, token:"0"})
+        }
+        if i > 0 && tokens[i].token == "-" && (tokens[i-1].token_type == Operator || tokens[i-1].token_type == Parenthesis(true)){
+            tokens.insert(i, Token{token_type:Constant, token:"0"});
+            tokens.insert(i, Token{token_type:Parenthesis(true), token:"("});
+            tokens.insert(i+4, Token{token_type: Parenthesis(false), token:")"});
+            i+= 1;
+        }
+        i += 1;
+    };
+}
+
+fn build_tree_from_string<'a>(input:String) -> (Vec<Node<'a>>, Vec<VariableTerm>, usize){
+    let mut input = input.as_str();
     if !validate_expression(&input){
         panic!("Invalid expression");
     }
 
-    {
-        let mut current_token: Token;
-        while let Some(category) = get_token_category(input) {
-            println!("Remaining untokenized data: {input}");
-            (current_token, input) = build_token_of_type(category.clone(), &input);
-
-            tokens.push(current_token);
-        }
-    }
-
-    //Handle implicit operations
-    {
-        let mut i = 0;
-        while i <tokens.len()
-        {
-            if i > 0 && tokens[i].token_type == Variable && (tokens[i - 1].token_type == Variable || tokens[i-1].token_type == Constant) {
-                tokens.insert(i, Token{token_type: Operator, token:'*'.to_string()});
-                //Skip forward a token, as the next token in the list is now the one that we just checked.
-                i += 1;
-            }
-            if i < (tokens.len() - 1) && (tokens[i].token_type == Variable || tokens[i].token_type == Constant) && tokens[i+1].token_type == Parenthesis(true){
-                tokens.insert(i+1, Token{token_type: Operator, token:'*'.to_string()})
-            }
-            if i == 0 && tokens[i].token == "-"{
-                tokens.insert(0, Token{token_type:Constant, token:"0".to_string()})
-            }
-            if i > 0 && tokens[i].token == "-" && (tokens[i-1].token_type == Operator || tokens[i-1].token_type == Parenthesis(true)){
-                tokens.insert(i, Token{token_type:Constant, token:"0".to_string()});
-                tokens.insert(i, Token{token_type:Parenthesis(true), token:"(".to_string()});
-                tokens.insert(i+4, Token{token_type: Parenthesis(false), token:")".to_string()});
-                i+= 1;
-            }
-            i += 1;
-        }
-    }
+    let mut tokens = build_token_vector(input);
+    explicitize_implicit_operators(&mut tokens);
 
     println!("Tokens:");
     for token in &tokens{
@@ -158,8 +183,6 @@ fn main() {
 
     //Rebuild the tree to index it. This feels incredibly inefficient.
     let root_index:usize = tree.len()- 1;
-    let mut new_vec: Vec<Node> = Vec::with_capacity(tree.len());
-    new_vec.resize(tree.len(), tree[0].clone());
     println!("Tree before pruning:");
     print_tree(&tree, root_index, &mut String::from(""), true);
 
@@ -172,40 +195,9 @@ fn main() {
 
             unique_variables.push(term.unwrap());
         }
-    }
+    };
 
-    if unique_variables.len() == 0{
-        //No variables, evaluate as normal.
-        println!("{}", evaluate_tree(&tree, root_index));
-        return;
-    }
-
-    // root_node = combine_all_variables(root_node, &unique_variables);
-    // println!("Tree after variable commutation:");
-    // print_tree(&root_node, &mut String::from(""), true);
-    //
-    // let simplifiable_nodes = Rc::new(RefCell::new(Vec::<usize>::new()));
-    // get_simplifiable_nodes(&root_node, Rc::clone(&simplifiable_nodes));
-
-    // todo!("This code currently assumes ALL operators are commutative.");
-    // for index in simplifiable_nodes.borrow().iter(){
-    //     let index = *index;
-    //     let node_value = evaluate_tree(get_node_by_index(&root_node, index));
-    //     root_node = replace_node_at_index(root_node, Terminal(Token { token_type: Constant, token: node_value.to_string() }, index), index, get_position_of_first_one(index));
-    //     print_tree(&root_node, &mut String::from(""), true);
-    // }
-
-    //STEPS TO SOLVE FOR VARIABLES
-    //1: Simplify any constants and combine variables
-    //1a If a branching node has one constant child and one branching child which contains the same operator as itself, and that branching child has one constant and one variable as operands, the first branching node can be replaced
-    //with a new branching node with a constant child containing the result of the original node's operator applied to the two constants, and the other child containing the variable.
-    //1b To simplify constant operations, identify the highest point on the tree with no variable descendants, and then replace that node with a constant containing the return value of evaluate_tree() when called on that node.
-    //1.5 Account for the commutative property
-    //2: Apply the distributive property
-    //3: Isolate (somehow)
-
-    //To implement the commutative property, use the same pass when identifying simplifiable nodes to flag all un-simplifiable nodes. All un-simplifiable nodes can either be simplified to coefficient-variable(C-V) form, or will require the commutative property.
-    //NOTE: Multiplication doesn't disqualify a branch for this, so long as exactly one of the operands is a variable.
+    (tree, unique_variables,root_index)
 }
 
 // fn vec_contains_identical_node(comparison_vec:&Vec<Node>, node_vec:&Vec<Node>, index:usize) -> bool{
@@ -215,6 +207,7 @@ fn main() {
 //     false
 // }
 
+//NOTE: this function is not intended to handle nodes like 2 * x
 fn convert_node_to_variable_term(node_vec:&Vec<Node>, index:usize) -> Option<VariableTerm> {
     match &node_vec[index] {
         Terminal{token, parent} => {
@@ -223,10 +216,16 @@ fn convert_node_to_variable_term(node_vec:&Vec<Node>, index:usize) -> Option<Var
             } else { None }
         }
         Branching{token,..} => {
-            let variable = get_immediate_child_of_type(node_vec, index, Variable);
-            let constant = get_immediate_child_of_type(node_vec, index, Constant);
-            if token.token == "^" && let Some(variable) = variable && let Some(constant) = constant {
-                Some(VariableTerm { variable: variable.get_token().token.parse().unwrap(), exponent: constant.get_token().token.parse().unwrap() })
+            let variable = get_any_child_of_type(node_vec, index, Variable);
+            let exponent = get_immediate_child_of_type(node_vec, index, Constant);
+            if !variable.is_some() || !exponent.is_some() { return None};
+
+            if token.token == "^" {
+                let variable_char:char = variable.get_token().token.parse().unwrap();
+                Some(VariableTerm {
+                    variable: variable_char,
+                    exponent: exponent.get_token().token.parse().unwrap()
+                })
             } else {
                 None
             }
@@ -302,12 +301,12 @@ fn validate_expression(input: &str) -> bool{
 //     false
 // }
 //
-fn combine_nodes(mut node_vec: Vec<Node>, variable:Option<&VariableTerm>, index1:usize, index2: usize) -> Vec<Node>
+fn combine_nodes<'a>(mut node_vec: Vec<Node>, variable:Option<&VariableTerm>, index1:usize, index2: usize) -> Vec<Node<'a>>
 {
     let token1: Option<Token>;
     let token2: Option<Token>;
-    let variable_coefficient_1: Option<f32>;
-    let variable_coefficient_2: Option<f32>;
+    let variable_coefficient_1: Option<&str>;
+    let variable_coefficient_2: Option<&str>;
     let is_constant:bool;
     let parent_index_1:usize;
     let parent_index_2:usize;
@@ -332,55 +331,77 @@ fn combine_nodes(mut node_vec: Vec<Node>, variable:Option<&VariableTerm>, index1
         node_vec = replace_node_at_index(node_vec, construct_constant(number, parent_index_1), index1);
     }
     else {
-        todo!("use parent index of node to be replaced as new parent index");
+        let variable_token = Token{token_type:Variable, token: String::from(variable.unwrap().variable) };
         let new_index = construct_variable_coefficient_node(&mut node_vec, variable.unwrap(), variable_coefficient_1.unwrap() + variable_coefficient_2.unwrap(), 0f32, index1);
-        node_vec = replace_node_at_index(node_vec, , index1, get_position_of_first_one(index1));
+        node_vec = replace_node_at_index(node_vec, new_index, index1, );
     }
 
     let new_node = get_identity_node(get_parent_of_node(&root_node, index2), index2);
 
-    replace_node_at_index(root_node, new_node, index2, get_position_of_first_one(index2))
+    replace_node_at_index(node_vec, new_node, index2)
 }
 
-// fn combine_all_variables(mut tree:Vec<Node>, root_index:usize, variables:Vec<VariableTerm>) -> Vec<Node>{
-//     let mut tree_iterator = construct_tree_iterator(&tree, root_index);
-//     let mut result: Vec<Vec<usize>> = Vec::with_capacity(variables.len());
-//     for _ in 0..variables.len(){
-//         result.push(Vec::new());
-//     }
-//
-//     while let Some(node) = tree_iterator.next(){
-//         let node = &tree[node];
-//         let term = convert_node_to_variable_term(&tree, root_index);
-//
-//         if !term.is_some(){continue;}
-//         let term = term.unwrap();
-//
-//         let variable_index:usize = variables.iter().position(|thing| *thing == term).unwrap();
-//
-//         result[variable_index].push(tree.iter().position(|thing| thing == node).unwrap());
-//         tree_iterator.skip_next_branch = true;
-//     };
-//
-//     let mut i:usize = 0;
-//     for mut result_set in result{
-//         let var_term = variables[i].clone();
-//         while result_set.len() > 1{
-//             tree = combine_nodes(tree, Some(&var_term), result_set[0], result_set.swap_remove(1))
-//         }
-//         i +=1;
-//     }
-//     tree
-// }
+fn combine_all_variables(mut tree:Vec<Node>, root_index:usize, variables:Vec<VariableTerm>) -> Vec<Node>{
+    let mut tree_iterator = construct_tree_iterator(&tree, root_index);
+    let mut result: Vec<Vec<usize>> = Vec::with_capacity(variables.len());
+    for _ in 0..variables.len(){
+        result.push(Vec::new());
+    }
 
-fn construct_variable_coefficient_node(node_vec: &mut Vec<Node>, variable:Token, coefficient:f32, exponent:f32, parent_index:usize) -> usize{
+    while let Some(node_index) = tree_iterator.next(){
+        let node = &tree[node_index];
+        let term = convert_node_to_variable_term(&tree, root_index);
+
+        if !term.is_some(){continue;}
+        let term = term.unwrap();
+
+        let variable_index:usize = variables.iter().position(|thing| *thing == term).unwrap();
+
+        result[variable_index].push(node_index);
+        tree_iterator.skip_next_branch = true;
+    };
+
+    let mut i:usize = 0;
+    for mut result_set in result{
+        //It should be possible to remove the value, rather than cloning it
+        let var_term = variables[i].clone();
+        while result_set.len() > 1{
+            tree = combine_nodes(tree, Some(&var_term), result_set[0], result_set.swap_remove(1))
+        }
+        i +=1;
+    }
+    tree
+}
+
+    let new_node = get_identity_node(get_parent_of_node(&root_node, index2), index2);
+
+    match &node_vec[index]{
+        Branching {child1, child2, token, ..} =>{
+            if !(
+                (parent_character.is_some() && token.token != new_parent_character)
+                || (token.token != "*" || !get_immediate_child_of_type(node_vec, index, Variable).is_some())
+                || (token.token != "^" || (
+                    !get_immediate_child_of_type(node_vec, *child1, Variable).is_some() && !get_immediate_child_of_type(node_vec, *child2, Variable).is_some()))
+            )
+            {return false};
+
+            let child1valid = if node_vec[*child1].get_token().token_type == Operator {is_branch_commutable(node_vec, *child1, Some(&new_parent_character)) } else {true};
+            let child2valid = if node_vec[*child2].get_token().token_type == Operator {is_branch_commutable(node_vec, *child2, Some(&new_parent_character)) } else {true};
+
+            child1valid && child2valid
+        },
+        Terminal {..} => {unreachable!("This function should not be called on terminal nodes")}
+    }
+}
+
+fn construct_variable_coefficient_node<'a>(node_vec: &mut Vec<Node<'a>>, variable:Token<'a>, coefficient:&'a str, exponent:&'a str, parent_index:usize) -> usize{
     //offset index to get the index where the multiplication node will be
-    let final_index = node_vec.len() + if (exponent == 1f32) { 3} else {4};
+    let final_index = node_vec.len() + if (exponent == "1") { 3} else {4};
     let coefficient_index = push_return_index(node_vec, construct_constant(coefficient, final_index));
-    let new_token = Token{token_type:Operator, token: String::from("*")};
+    let new_token = Token{token_type:Operator, token: "*"};
 
-    if exponent != 1f32{
-        let exponent_token = Token{token_type:Operator, token:String::from("^")};
+    if exponent != "1"{
+        let exponent_token = construct_token(Operator, "^").unwrap();
         let exponent_index = coefficient_index + 3;
         let exponent_power_index = push_return_index( node_vec, construct_constant(exponent, exponent_index));
         let variable_child = push_return_index( node_vec, Terminal{token:variable, parent:exponent_index});
@@ -411,8 +432,8 @@ fn construct_variable_coefficient_node(node_vec: &mut Vec<Node>, variable:Token,
 //     unreachable!("Never call this function on a terminal node")
 // }
 //
-fn construct_constant(value:f32, parent_index:usize) -> Node{
-    Terminal{token:Token{token_type:Constant, token:value.to_string()}, parent: parent_index }
+fn construct_constant(value: &str, parent_index:usize) -> Node {
+    Terminal{token:Token{token_type:Constant, token: value }, parent: parent_index }
 }
 //
 type NodeCheck = fn(&Node) -> bool;
@@ -546,7 +567,7 @@ fn get_token_category_of_character (c: &char) -> Option<TokenCategory> {
 fn evaluate_tree (node_vec:&Vec<Node>, index:usize) -> f32{
     match &node_vec[index]{
         Branching{token, child1, child2, ..} =>{
-            match token.token.as_str() {
+            match token.token {
                 "+" =>{
                     evaluate_tree(node_vec, *child1) + evaluate_tree(node_vec, *child2)
                 }
@@ -585,12 +606,13 @@ fn process_operator<'a>(mut operator_stack: VecDeque<Token>, incoming: Token, op
     if let Some(last_operator_option) = operator_stack.back(){
         // println!("{x}");
         //Treat a left parenthesis as empty stack
-        if get_first_char(&last_operator_option.token).unwrap() == '('{
+        let last_operator_first_character = last_operator_option.token.chars().next().unwrap();
+        if last_operator_first_character == '('{
             operator_stack.push_back(incoming);
             return (operator_stack, nodes)
         }
 
-        match compare_operator_precedence(&get_first_char(&last_operator_option.token).unwrap(), &get_first_char(&incoming.token).unwrap())
+        match compare_operator_precedence(&last_operator_first_character, &incoming.token.chars().next().unwrap())
         {
             cmp::Ordering::Less =>{
                 println!("Operator of lesser precedence found on the stack");
@@ -653,14 +675,12 @@ fn get_token_category(slice: &str) -> Option<TokenCategory>{
 }
 
 fn build_token_of_type(category: TokenCategory, data: &str) -> (Token, &str){
-    let mut token_string = String::new();
     let mut end_of_current_token: usize = 0;
 
     for i in data.chars(){
         if let Some(x) = get_token_category_of_character(&i){
             if mem::discriminant(&x) != mem::discriminant(&category){ break;}
 
-            token_string.push(i);
             //Variables and operators are only one character, so we don't need to keep searching
             if category == Variable || category == Operator
             {
@@ -671,7 +691,8 @@ fn build_token_of_type(category: TokenCategory, data: &str) -> (Token, &str){
         end_of_current_token += 1;
     }
 
-    (Token {token_type: category, token:token_string}, &data[end_of_current_token..])
+    let token_token = &data[0..(end_of_current_token - 1)];
+        (Token {token_type: category, token:token_token}, &data[end_of_current_token..])
 }
 
 fn replace_node_at_index<'a>(mut node_vec:Vec<Node>, new_node_index:usize, node_index:usize) -> Vec<Node> {
@@ -681,13 +702,34 @@ fn replace_node_at_index<'a>(mut node_vec:Vec<Node>, new_node_index:usize, node_
 
     // let path_position = path_position - 1;
     node_vec.swap(node_index, new_node_index);
+    todo!("Remove the old node");
     node_vec
 }
 
-fn remove_node_from_tree(node_vec: Vec<Node>, index:usize) -> Vec<Node>{
-    //Get the node at the given index
-    //Make a list of all nodes that will be removed
-    //Iterate through the tree, skip all nodes to be removed, reduce all "index" values (parent and child indices, hereby referred to as A) by the number of values on the list of nodes to be removed that are less than A.
+// fn remove_node_from_tree(node_vec: Vec<Node>, index:usize) -> Vec<Node>{
+//     //Get the node at the given index
+//     //Make a list of all nodes that will be removed
+//     //Iterate through the tree, skip all nodes to be removed, reduce all "index" values (parent and child indices, hereby referred to as A) by the number of values on the list of nodes to be removed that are less than A.
+//     let mut removal_indices: Vec<usize> = get_node_children(&node_vec, index);
+//
+//     for index in 0..node_vec.len(){
+//         if removal_indices.contains(&index) {continue;}
+//         let current_node = node_vec[index];
+//         let decrease_value_self = node_vec.iter().filter(|&&x| x > current_node.index());
+//     };
+// }
+
+fn get_node_children(node_vec:&Vec<Node>, index:usize) -> Vec<usize>{
+    let mut return_value = Vec::new();
+    return_value.push(index);
+    match node_vec[index] {
+        Branching {child1, child2, ..} =>{
+            get_node_children(node_vec, child1);
+            get_node_children(node_vec, child2);
+        }
+        Terminal {..} => {}
+    };
+    return_value
 }
 
 fn construct_tree_iterator(vec:&Vec<Node>, start:usize) -> TreeIterator<'_> {
@@ -704,7 +746,11 @@ fn construct_tree_iterator(vec:&Vec<Node>, start:usize) -> TreeIterator<'_> {
 //     }.to_string();
 //      println!("{x}")
 // }
+fn construct_token(token_type:TokenCategory, token:&str) -> Option<Token>{
+    if token.len() == 0 {return None;}
 
+    Some(Token { token_type, token })
+}
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 enum TokenCategory {
@@ -715,19 +761,19 @@ enum TokenCategory {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-struct Token<>{
+struct Token<'a, >{
     token_type: TokenCategory,
-    token: String
+    token: &'a str
 }
 
 #[derive(Clone, PartialEq)]
-enum Node<> {
+enum Node<'a, > {
     //Self token, child 1, child 2,parent index
-    Branching {token:Token, child1:usize, child2:usize, parent:usize},
-    Terminal{token:Token, parent:usize}
+    Branching {token:Token<'a>, child1:usize, child2:usize, parent:usize},
+    Terminal{token:Token<'a>, parent:usize}
 }
 
-impl Node{
+impl Node<'_>{
     fn get_token(&self) -> &Token{
         match self{
             Branching { token, ..} => token,
@@ -740,12 +786,6 @@ impl Node{
             Terminal {parent,..} => *parent
         }
     }
-    // fn index(&self) -> usize{
-    //     match self{
-    //         Branching{_,_,_,index, _} => *index,
-    //         Terminal(_, index, _) => *index
-    //     }
-    // }
     fn is_terminal(&self) -> bool{
         match self{
             Terminal{..} => true,
@@ -754,13 +794,13 @@ impl Node{
     }
 }
 
-fn get_variable_coefficient(node_vec:&Vec<Node>, index:usize) -> Option<f32>{
+fn get_variable_coefficient<'a>(node_vec:&Vec<Node>, index:usize) -> Option<&'a str>{
     match &node_vec[index]{
-        Terminal { token,..} => {if token.token_type == Variable {Some(1f32)} else {None}},
+        Terminal { token,..} => {if token.token_type == Variable {Some("1")} else {None}},
         Branching { token,..} =>{
             //If this is a multiplication node, assume that it is a variable-coefficient node.
             println!("I cannot imagine that this detects exponents correctly");
-            if token.token == "*" {return Some(get_immediate_child_of_type(node_vec, index, Constant).unwrap().get_token().token.parse().unwrap())}
+            if token.token == "*" {return Some(get_immediate_child_of_type(node_vec, index, Constant).unwrap().get_token().token)}
 
             None
         }
@@ -815,7 +855,7 @@ fn get_immediate_child_of_type(tree_vector:&Vec<Node>, node_index:usize, categor
 #[derive(Clone)]
 struct TreeIterator<'a>{
     current: Option<usize>,
-    vector: &'a Vec<Node>,
+    vector: &'a Vec<Node<'a>>,
     root_index: usize,
     unexplored: VecDeque<usize>,
     skip_next_branch:bool
@@ -838,11 +878,13 @@ impl<'b> Iterator for TreeIterator<'b>{
         }
 
         let current_node = &self.vector[self.current.unwrap()];
+        //I don't understand why these clone() calls are necessary, but the compiler insisted
         self.current =
             match current_node {
                 Branching{child1, child2, ..} => {
-                    self.unexplored.push_back(*child2);
-                    Some(*child1)
+                    let child1 = child1.clone();
+                    self.unexplored.push_back(child2.clone());
+                    Some(child1)
                 }
                 Terminal{..} => {
                     self.unexplored.pop_back()
